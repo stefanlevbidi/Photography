@@ -22,6 +22,7 @@ from modules.face.face_detector import FaceDetector
 from modules.face.face_regions import FaceRegions
 from modules.eyes.eye_engine import EyeEngine
 from modules.skin.skin_engine import SkinEngine
+from modules.hair.hair_engine import HairEngine
 
 
 def find_input_image():
@@ -55,6 +56,7 @@ def run(image_path):
 
     # Stage 3: FACE REGIONS
     skin_masks = {}
+    hair_masks = {}
     for face in faces:
         regions = FaceRegions(image_path, face["box"])
         regions.process()
@@ -63,6 +65,7 @@ def run(image_path):
         for path in region_paths:
             print(f"  Region data written to: {path}")
         skin_masks[face["person_id"]] = regions.masks["skin"]
+        hair_masks[face["person_id"]] = regions.masks["hair"]
 
     # Stage 4: EYE ENGINE
     for face in faces:
@@ -83,12 +86,25 @@ def run(image_path):
         for path in skin_paths:
             print(f"  Skin data written to: {path}")
 
-    # Stages 6-8: hair/background, density, export.
+    # Stage 6: HAIR ENGINE
+    for face in faces:
+        hair_engine = HairEngine(image_path, hair_masks[face["person_id"]])
+        hair_engine.analyze()
+        hair_engine.process()
+        hair_paths = hair_engine.export(person_id=face["person_id"])
+        print(
+            f"  Hair prepared for {face['person_id']}: dark_mass="
+            f"{hair_engine.dark_mass_ratio:.2f} highlight={hair_engine.highlight_ratio:.2f}"
+        )
+        for path in hair_paths:
+            print(f"  Hair data written to: {path}")
+
+    # Stages 7-8: background, density, export.
     # Each has scaffolding under modules/ (analyze/process/export) but is not
     # yet implemented -- they land in later development passes.
     print(
-        "  Remaining pipeline stages (hair, background, density, export) "
-        "are scaffolded under modules/ and not yet implemented."
+        "  Remaining pipeline stages (background, density, export) are "
+        "scaffolded under modules/ and not yet implemented."
     )
 
     return analysis, faces
