@@ -18,6 +18,7 @@ from pathlib import Path
 
 from config import settings
 from modules.analyzer.image_analyzer import ImageAnalyzer
+from modules.face.face_detector import FaceDetector
 
 
 def find_input_image():
@@ -41,16 +42,23 @@ def run(image_path):
     else:
         print("  No exposure problems detected.")
 
-    # Stages 2-5: face/regions, eyes/skin/hair/background, density, export.
+    # Stage 2: FACE DETECTION
+    detector = FaceDetector(image_path)
+    faces = detector.process()
+    face_paths = detector.export(settings.OUTPUT_DIR)
+    print(f"  Detected {len(faces)} face(s): {[f['person_id'] for f in faces]}")
+    for path in face_paths:
+        print(f"  Face data written to: {path}")
+
+    # Stages 3-5: regions, eyes/skin/hair/background, density, export.
     # Each has scaffolding under modules/ (analyze/process/export) but is not
     # yet implemented -- they land in later development passes.
     print(
-        "  Remaining pipeline stages (face detection, regions, eyes, skin, "
-        "hair, background, density, export) are scaffolded under modules/ "
-        "and not yet implemented."
+        "  Remaining pipeline stages (regions, eyes, skin, hair, background, "
+        "density, export) are scaffolded under modules/ and not yet implemented."
     )
 
-    return analysis
+    return analysis, faces
 
 
 def main():
