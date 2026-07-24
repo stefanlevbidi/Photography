@@ -21,6 +21,7 @@ from modules.analyzer.image_analyzer import ImageAnalyzer
 from modules.face.face_detector import FaceDetector
 from modules.face.face_regions import FaceRegions
 from modules.eyes.eye_engine import EyeEngine
+from modules.skin.skin_engine import SkinEngine
 
 
 def find_input_image():
@@ -53,6 +54,7 @@ def run(image_path):
         print(f"  Face data written to: {path}")
 
     # Stage 3: FACE REGIONS
+    skin_masks = {}
     for face in faces:
         regions = FaceRegions(image_path, face["box"])
         regions.process()
@@ -60,6 +62,7 @@ def run(image_path):
         print(f"  Regions for {face['person_id']}: {list(regions.masks.keys())}")
         for path in region_paths:
             print(f"  Region data written to: {path}")
+        skin_masks[face["person_id"]] = regions.masks["skin"]
 
     # Stage 4: EYE ENGINE
     for face in faces:
@@ -70,12 +73,22 @@ def run(image_path):
         for path in eye_paths:
             print(f"  Eye data written to: {path}")
 
-    # Stage 5: skin/hair/background, density, export.
+    # Stage 5: SKIN ENGINE
+    for face in faces:
+        skin_engine = SkinEngine(image_path, skin_masks[face["person_id"]])
+        skin_engine.analyze()
+        skin_engine.process()
+        skin_paths = skin_engine.export(person_id=face["person_id"])
+        print(f"  Skin prepared for {face['person_id']}: noise {skin_engine.noise_estimate:.2f}")
+        for path in skin_paths:
+            print(f"  Skin data written to: {path}")
+
+    # Stages 6-8: hair/background, density, export.
     # Each has scaffolding under modules/ (analyze/process/export) but is not
     # yet implemented -- they land in later development passes.
     print(
-        "  Remaining pipeline stages (skin, hair, background, density, "
-        "export) are scaffolded under modules/ and not yet implemented."
+        "  Remaining pipeline stages (hair, background, density, export) "
+        "are scaffolded under modules/ and not yet implemented."
     )
 
     return analysis, faces
