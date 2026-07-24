@@ -99,18 +99,32 @@ class FaceRegions:
 
     def _segment_foreground(self, image):
         fb = self.face_box
-        x0 = max(0, int(fb["x"] - fb["width"] * 0.7))
-        y0 = max(0, int(fb["y"] - fb["height"] * 0.6))
-        x1 = min(image.shape[1], int(fb["x"] + fb["width"] * 1.7))
+        # A tighter seed rect keeps GrabCut from wandering into unrelated
+        # background structure (e.g. furniture, frames) far from the face --
+        # wide padding was pulling in disconnected background as "foreground".
+        x0 = max(0, int(fb["x"] - fb["width"] * 0.4))
+        y0 = max(0, int(fb["y"] - fb["height"] * 0.5))
+        x1 = min(image.shape[1], int(fb["x"] + fb["width"] * 1.4))
         y1 = min(image.shape[0], int(fb["y"] + fb["height"] * 4.0))
         rect = (x0, y0, x1 - x0, y1 - y0)
 
         mask = np.zeros(image.shape[:2], dtype=np.uint8)
         bgd_model = np.zeros((1, 65), dtype=np.float64)
         fgd_model = np.zeros((1, 65), dtype=np.float64)
-        cv2.grabCut(image, mask, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
+        cv2.grabCut(image, mask, rect, bgd_model, fgd_model, 8, cv2.GC_INIT_WITH_RECT)
 
         foreground = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+
+        # Clean up thin spurious bridges to unrelated background, then keep
+        # only the main connected mass (the person), discarding any leftover
+        # disconnected fragments.
+        kernel = np.ones((7, 7), np.uint8)
+        foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, kernel)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(foreground)
+        if num_labels > 1:
+            largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+            foreground = np.where(labels == largest_label, 255, 0).astype(np.uint8)
+
         return foreground
 
     # ------------------------------------------------------------------
