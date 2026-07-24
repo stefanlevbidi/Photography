@@ -1,8 +1,7 @@
 # Implemented modules
 numpy>=1.26
 Pillow>=10.0
-
-# Required by future modules (face detection, regions, eyes, skin, hair,
-# background, density) -- not yet used by any implemented code.
 opencv-python>=4.9
-mediapipe>=0.10
+
+# Required by future modules (regions, eyes, skin, hair, background,
+# density) -- not yet used by any implemented code.
