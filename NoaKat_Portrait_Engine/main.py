@@ -16,6 +16,9 @@ If no path is given, the first supported image found in input/ is used.
 import sys
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 from config import settings
 from modules.analyzer.image_analyzer import ImageAnalyzer
 from modules.face.face_detector import FaceDetector
@@ -23,6 +26,8 @@ from modules.face.face_regions import FaceRegions
 from modules.eyes.eye_engine import EyeEngine
 from modules.skin.skin_engine import SkinEngine
 from modules.hair.hair_engine import HairEngine
+from modules.background.background_engine import BackgroundEngine
+from modules.density.density_engine import DensityEngine
 
 
 def find_input_image():
@@ -57,6 +62,7 @@ def run(image_path):
     # Stage 3: FACE REGIONS
     skin_masks = {}
     hair_masks = {}
+    background_masks = {}
     for face in faces:
         regions = FaceRegions(image_path, face["box"])
         regions.process()
@@ -66,6 +72,7 @@ def run(image_path):
             print(f"  Region data written to: {path}")
         skin_masks[face["person_id"]] = regions.masks["skin"]
         hair_masks[face["person_id"]] = regions.masks["hair"]
+        background_masks[face["person_id"]] = regions.masks["background"]
 
     # Stage 4: EYE ENGINE
     for face in faces:
@@ -77,21 +84,25 @@ def run(image_path):
             print(f"  Eye data written to: {path}")
 
     # Stage 5: SKIN ENGINE
+    skin_prepared = {}
     for face in faces:
         skin_engine = SkinEngine(image_path, skin_masks[face["person_id"]])
         skin_engine.analyze()
         skin_engine.process()
         skin_paths = skin_engine.export(person_id=face["person_id"])
+        skin_prepared[face["person_id"]] = skin_engine.prepared_image
         print(f"  Skin prepared for {face['person_id']}: noise {skin_engine.noise_estimate:.2f}")
         for path in skin_paths:
             print(f"  Skin data written to: {path}")
 
     # Stage 6: HAIR ENGINE
+    hair_prepared = {}
     for face in faces:
         hair_engine = HairEngine(image_path, hair_masks[face["person_id"]])
         hair_engine.analyze()
         hair_engine.process()
         hair_paths = hair_engine.export(person_id=face["person_id"])
+        hair_prepared[face["person_id"]] = hair_engine.prepared_image
         print(
             f"  Hair prepared for {face['person_id']}: dark_mass="
             f"{hair_engine.dark_mass_ratio:.2f} highlight={hair_engine.highlight_ratio:.2f}"
@@ -99,13 +110,51 @@ def run(image_path):
         for path in hair_paths:
             print(f"  Hair data written to: {path}")
 
-    # Stages 7-8: background, density, export.
-    # Each has scaffolding under modules/ (analyze/process/export) but is not
-    # yet implemented -- they land in later development passes.
-    print(
-        "  Remaining pipeline stages (background, density, export) are "
-        "scaffolded under modules/ and not yet implemented."
-    )
+    # Stage 7: BACKGROUND ENGINE
+    background_prepared = {}
+    for face in faces:
+        background_engine = BackgroundEngine(image_path, background_masks[face["person_id"]])
+        background_engine.analyze()
+        background_engine.process()
+        background_paths = background_engine.export(person_id=face["person_id"])
+        background_prepared[face["person_id"]] = background_engine.prepared_image
+        print(f"  Background flattened for {face['person_id']}")
+        for path in background_paths:
+            print(f"  Background data written to: {path}")
+
+    # Stage 8: DENSITY ENGINE
+    # Combine each engine's region-specific edit onto the original photo --
+    # the masks are mutually exclusive, so this is a plain masked overlay.
+    original_image = cv2.imread(str(image_path))
+    for face in faces:
+        person_id = face["person_id"]
+        composite = original_image.copy()
+        skin_mask = skin_masks[person_id]
+        hair_mask = hair_masks[person_id]
+        background_mask = background_masks[person_id]
+        composite = np.where(cv2.cvtColor(skin_mask, cv2.COLOR_GRAY2BGR) > 0, skin_prepared[person_id], composite)
+        composite = np.where(cv2.cvtColor(hair_mask, cv2.COLOR_GRAY2BGR) > 0, hair_prepared[person_id], composite)
+        composite = np.where(
+            cv2.cvtColor(background_mask, cv2.COLOR_GRAY2BGR) > 0, background_prepared[person_id], composite
+        )
+        composite = composite.astype(np.uint8)
+
+        composite_path = settings.OUTPUT_DIR / "masks" / person_id / "composite.png"
+        composite_path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(composite_path), composite)
+
+        density_engine = DensityEngine(composite_path, levels=settings.DENSITY_LEVELS_DEFAULT)
+        density_engine.analyze()
+        density_engine.process()
+        density_paths = density_engine.export(person_id=person_id)
+        print(f"  Density map prepared for {person_id}: {settings.DENSITY_LEVELS_DEFAULT} levels")
+        for path in density_paths:
+            print(f"  Density data written to: {path}")
+
+    # Stage 9: export.
+    # Has scaffolding under modules/export/ (analyze/process/export) but is
+    # not yet implemented -- lands in a later development pass.
+    print("  Export stage is scaffolded under modules/export/ and not yet implemented.")
 
     return analysis, faces
 
