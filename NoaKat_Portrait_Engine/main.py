@@ -20,6 +20,7 @@ from config import settings
 from modules.analyzer.image_analyzer import ImageAnalyzer
 from modules.face.face_detector import FaceDetector
 from modules.face.face_regions import FaceRegions
+from modules.eyes.eye_engine import EyeEngine
 
 
 def find_input_image():
@@ -60,11 +61,20 @@ def run(image_path):
         for path in region_paths:
             print(f"  Region data written to: {path}")
 
-    # Stages 4-5: eyes/skin/hair/background, density, export.
+    # Stage 4: EYE ENGINE
+    for face in faces:
+        eye_engine = EyeEngine(image_path, face["box"])
+        eye_engine.process()
+        eye_paths = eye_engine.export(person_id=face["person_id"])
+        print(f"  Eyes for {face['person_id']}: {len(eye_engine.eyes)} detected")
+        for path in eye_paths:
+            print(f"  Eye data written to: {path}")
+
+    # Stage 5: skin/hair/background, density, export.
     # Each has scaffolding under modules/ (analyze/process/export) but is not
     # yet implemented -- they land in later development passes.
     print(
-        "  Remaining pipeline stages (eyes, skin, hair, background, density, "
+        "  Remaining pipeline stages (skin, hair, background, density, "
         "export) are scaffolded under modules/ and not yet implemented."
     )
 
