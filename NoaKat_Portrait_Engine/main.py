@@ -28,6 +28,7 @@ from modules.skin.skin_engine import SkinEngine
 from modules.hair.hair_engine import HairEngine
 from modules.background.background_engine import BackgroundEngine
 from modules.density.density_engine import DensityEngine
+from modules.export.export_engine import ExportEngine
 
 
 def find_input_image():
@@ -151,10 +152,14 @@ def run(image_path):
         for path in density_paths:
             print(f"  Density data written to: {path}")
 
-    # Stage 9: export.
-    # Has scaffolding under modules/export/ (analyze/process/export) but is
-    # not yet implemented -- lands in a later development pass.
-    print("  Export stage is scaffolded under modules/export/ and not yet implemented.")
+    # Stage 9: EXPORT
+    export_engine = ExportEngine(settings.OUTPUT_DIR)
+    export_engine.analyze()
+    export_engine.process()
+    export_paths = export_engine.export()
+    print(f"  NoaKat output ready for Stipplism: {export_engine.metadata}")
+    for name, path in export_paths.items():
+        print(f"  {name}: {path}")
 
     return analysis, faces
 
