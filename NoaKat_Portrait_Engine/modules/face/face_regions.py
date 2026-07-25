@@ -99,18 +99,91 @@ class FaceRegions:
 
     def _segment_foreground(self, image):
         fb = self.face_box
-        x0 = max(0, int(fb["x"] - fb["width"] * 0.7))
-        y0 = max(0, int(fb["y"] - fb["height"] * 0.6))
-        x1 = min(image.shape[1], int(fb["x"] + fb["width"] * 1.7))
-        y1 = min(image.shape[0], int(fb["y"] + fb["height"] * 4.0))
+        height, width = image.shape[:2]
+        # A tighter seed rect keeps GrabCut from wandering into unrelated
+        # background structure (e.g. furniture, frames) far from the face --
+        # wide padding was pulling in disconnected background as "foreground".
+        x0 = max(0, int(fb["x"] - fb["width"] * 0.4))
+        y0 = max(0, int(fb["y"] - fb["height"] * 0.5))
+        x1 = min(width, int(fb["x"] + fb["width"] * 1.4))
+        y1 = min(height, int(fb["y"] + fb["height"] * 4.0))
         rect = (x0, y0, x1 - x0, y1 - y0)
 
-        mask = np.zeros(image.shape[:2], dtype=np.uint8)
+        mask = np.zeros((height, width), dtype=np.uint8)
         bgd_model = np.zeros((1, 65), dtype=np.float64)
         fgd_model = np.zeros((1, 65), dtype=np.float64)
-        cv2.grabCut(image, mask, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
+        cv2.grabCut(image, mask, rect, bgd_model, fgd_model, 8, cv2.GC_INIT_WITH_RECT)
+
+        # A second pass hard-forces regions GrabCut's colour model tends to
+        # misjudge: dark/voluminous hair and dark clothing both read as
+        # near-identical to a black background by colour alone, so a
+        # colour-only first pass crops hair short and can erase dark
+        # garments. Hard priors (GC_FGD) are never revisited by GrabCut, so
+        # they survive even when local colour statistics point elsewhere.
+        cx = fb["x"] + fb["width"] // 2
+        face_top, face_bottom = fb["y"], fb["y"] + fb["height"]
+
+        # Hair: a full ellipse (not just the cap above the head) reaching
+        # down into the face box, so the forced region stays contiguous
+        # with the reliably-detected face/skin blob -- a half-dome that
+        # stops right at the hairline leaves a gap that GrabCut's second
+        # pass can reclassify as background, disconnecting the hair mass
+        # from the person and losing it to the largest-component filter.
+        hair_center = (cx, face_top + int(fb["height"] * 0.15))
+        hair_axes = (int(fb["width"] * 0.72), int(fb["height"] * 0.65))
+        hair_prior = np.zeros((height, width), dtype=np.uint8)
+        cv2.ellipse(hair_prior, hair_center, hair_axes, 0, 0, 360, 255, -1)
+        mask[hair_prior == 255] = cv2.GC_FGD
+
+        # Torso/shoulders: clothing below the face, hard-forced foreground
+        # so dark or patterned garments aren't merged into the background.
+        torso_y0 = face_bottom - int(fb["height"] * 0.1)
+        torso_y1 = min(height, face_bottom + int(fb["height"] * 2.0))
+        torso_x0 = max(0, cx - int(fb["width"] * 1.0))
+        torso_x1 = min(width, cx + int(fb["width"] * 1.0))
+        mask[torso_y0:torso_y1, torso_x0:torso_x1] = cv2.GC_FGD
+
+        bgd_model2 = np.zeros((1, 65), dtype=np.float64)
+        fgd_model2 = np.zeros((1, 65), dtype=np.float64)
+        cv2.grabCut(image, mask, None, bgd_model2, fgd_model2, 5, cv2.GC_INIT_WITH_MASK)
 
         foreground = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+
+        # Clean up thin spurious bridges to unrelated background, then keep
+        # only the main connected mass (the person), discarding any leftover
+        # disconnected fragments.
+        kernel = np.ones((7, 7), np.uint8)
+        foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, kernel)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(foreground)
+        if num_labels > 1:
+            largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+            foreground = np.where(labels == largest_label, 255, 0).astype(np.uint8)
+
+        # The hard hair/torso priors are geometric approximations, so they
+        # inevitably sweep in some genuine background alongside the real
+        # subject. Reclassify flat, near-black patches back to background:
+        # a flat backdrop has near-zero local variance, while real dark hair
+        # and clothing keep visible grain and texture even at their darkest.
+        # Without this, those swept-in patches stay classified as hair or
+        # clothing, so later engines process (and brighten) them instead of
+        # flattening them to pure black -- leaving visible grey artifacts.
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        local_mean = cv2.blur(gray, (9, 9))
+        local_sqmean = cv2.blur(gray * gray, (9, 9))
+        local_variance = np.clip(local_sqmean - local_mean * local_mean, 0, None)
+        flat_black = (local_variance < 4) & (gray < 10)
+        foreground[flat_black] = 0
+
+        # Closing repairs the small holes this punches into genuinely
+        # dark-but-flat subject pixels (a few isolated dark threads etc.)
+        # without undoing the reclassification of real background patches.
+        close_kernel = np.ones((5, 5), np.uint8)
+        foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, close_kernel)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(foreground)
+        if num_labels > 1:
+            largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+            foreground = np.where(labels == largest_label, 255, 0).astype(np.uint8)
+
         return foreground
 
     # ------------------------------------------------------------------
